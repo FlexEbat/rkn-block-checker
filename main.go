@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fatih/color"
@@ -19,13 +20,21 @@ import (
 )
 
 var (
-	cyan   = color.New(color.FgCyan).SprintFunc()
-	white  = color.New(color.FgWhite).SprintFunc()
-	yellow = color.New(color.FgYellow).SprintFunc()
-	green  = color.New(color.FgGreen).SprintFunc()
-	red    = color.New(color.FgRed).SprintFunc()
-	reset  = color.New(color.Reset).SprintFunc()
+	cyan    = color.New(color.FgCyan).SprintFunc()
+	white   = color.New(color.FgWhite).SprintFunc()
+	yellow  = color.New(color.FgYellow).SprintFunc()
+	green   = color.New(color.FgGreen).SprintFunc()
+	red     = color.New(color.FgRed).SprintFunc()
+	reset   = color.New(color.Reset).SprintFunc()
+	scanner = bufio.NewScanner(os.Stdin)
 )
+
+func readInput() string {
+	if scanner.Scan() {
+		return strings.TrimSpace(scanner.Text())
+	}
+	return ""
+}
 
 func clear() {
 	var cmd *exec.Cmd
@@ -59,15 +68,17 @@ func drawBox(title string, options []string) {
 	fmt.Printf(" %s└──────────────────────────────┴───────────────────────────────┘\n", white(""))
 }
 
-func getTarget() string {
-	fmt.Printf("\n %s >> %sВведите IP или Домен для анализа\n", cyan(""), white(""))
-	fmt.Printf(" %s >> ", cyan(""))
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
+func parseTarget(input string) string {
 	target := strings.TrimSpace(input)
 	target = strings.Replace(target, "http://", "", -1)
 	target = strings.Replace(target, "https://", "", -1)
 	return strings.Split(target, "/")[0]
+}
+
+func getTarget() string {
+	fmt.Printf("\n %s >> %sВведите IP или Домен для анализа\n", cyan(""), white(""))
+	fmt.Printf(" %s >> ", cyan(""))
+	return parseTarget(readInput())
 }
 
 func sslChecker(t string) {
@@ -82,7 +93,12 @@ func sslChecker(t string) {
 	}
 	defer conn.Close()
 
-	cert := conn.ConnectionState().PeerCertificates[0]
+	certs := conn.ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		fmt.Printf("%s Цепочка сертификатов пуста\n", red("[!]"))
+		return
+	}
+	cert := certs[0]
 	fmt.Printf("\n%s ДЕТАЛИ СЕРТИФИКАТА:\n", green("[+]"))
 	fmt.Printf(" %s • Владелец:    %s\n", white(""), cert.Subject.CommonName)
 	fmt.Printf(" %s • Кем выдан:   %s (%s)\n", white(""), cert.Issuer.Organization, cert.Issuer.CommonName)
@@ -139,11 +155,12 @@ func checkQUIC(target string, port int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := quic.DialAddr(ctx, address, tlsConf, nil)
+	conn, err := quic.DialAddr(ctx, address, tlsConf, nil)
 	if err != nil {
 		fmt.Printf("%s %s:%d - QUIC недоступен: %v\n", red("[-]"), target, port, err)
 		return
 	}
+	defer conn.CloseWithError(0, "")
 	fmt.Printf("%s %s:%d - QUIC доступен\n", green("[+]"), target, port)
 }
 
@@ -200,8 +217,7 @@ func main() {
 		})
 
 		fmt.Printf("\n %sRKN_CHECKER_# ", cyan(""))
-		var choice string
-		fmt.Scanln(&choice)
+		choice := readInput()
 
 		if choice == "0" {
 			break
@@ -216,7 +232,8 @@ func main() {
 
 		switch choice {
 		case "1":
-			resp, err := http.Get("http://" + target)
+			client := &http.Client{Timeout: 10 * time.Second}
+			resp, err := client.Get("http://" + target)
 			if err == nil {
 				h := resp.Header
 				hsts := "MISSING"
@@ -237,14 +254,21 @@ func main() {
 			sslChecker(target)
 		case "3":
 			ports := []int{21, 22, 80, 443, 3306, 3389}
+			var wg sync.WaitGroup
+			fmt.Printf("%s Асинхронное сканирование портов для %s...\n", yellow("[*]"), target)
 			for _, p := range ports {
-				address := fmt.Sprintf("%s:%d", target, p)
-				conn, err := net.DialTimeout("tcp", address, 500*time.Millisecond)
-				if err == nil {
-					fmt.Printf("Port %d: OPEN\n", p)
-					conn.Close()
-				}
+				wg.Add(1)
+				go func(port int) {
+					defer wg.Done()
+					address := fmt.Sprintf("%s:%d", target, port)
+					conn, err := net.DialTimeout("tcp", address, 500*time.Millisecond)
+					if err == nil {
+						fmt.Printf("Port %d: %s\n", port, green("OPEN"))
+						conn.Close()
+					}
+				}(p)
 			}
+			wg.Wait()
 		case "4":
 			cmdName := "traceroute"
 			if runtime.GOOS == "windows" {
@@ -287,6 +311,6 @@ func main() {
 		}
 
 		fmt.Printf("\n%s[ Нажмите Enter для продолжения ]%s", yellow(""), reset(""))
-		bufio.NewReader(os.Stdin).ReadBytes('\n')
+		readInput()
 	}
 }
