@@ -1,0 +1,9 @@
+{
+  "ports": [21, 22, 80, 443, 3306, 3389],
+  "dial_timeout_ms": 2000,
+  "tls_timeout_ms": 10000,
+  "quic_timeout_ms": 5000,
+  "scan_timeout_ms": 500,
+  "block_small_kb": 8,
+  "block_large_kb": 16
+}
