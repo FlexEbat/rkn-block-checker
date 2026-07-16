@@ -249,6 +249,22 @@ func securityAudit(ctx context.Context, target string) {
 	}
 	fmt.Printf("HSTS: %s\n", hsts)
 	fmt.Printf("CSP:  %s\n", csp)
+
+	// Раздел 10.2 методики: наличие X-Forwarded-For/Forwarded/Via в ответе
+	// может указывать на промежуточный proxy-узел на пути. Актуально для
+	// самопроверки за собственным reverse-proxy/CDN — легитимный CDN тоже
+	// может проставлять эти заголовки, поэтому это не жёсткий признак.
+	proxyHeaders := []string{"X-Forwarded-For", "Forwarded", "Via"}
+	anyFound := false
+	for _, h := range proxyHeaders {
+		if v := resp.Header.Get(h); v != "" {
+			logger.Warn("Заголовок %s присутствует: %s (разд. 10.2 — возможный признак промежуточного proxy; легитимный CDN тоже может его проставлять)", h, v)
+			anyFound = true
+		}
+	}
+	if !anyFound {
+		logger.Success("Proxy-заголовки (X-Forwarded-For/Forwarded/Via) в ответе не обнаружены")
+	}
 }
 
 func portScanner(ctx context.Context, target string) {
@@ -312,36 +328,53 @@ func openExternal(target, tmpl string) {
 // прокидывает обработчик, так что рассинхронизация "меню показывает одно,
 // switch делает другое" структурно невозможна.
 type menuItem struct {
-	key     string
-	label   string
-	section string
-	handler func(ctx context.Context, target string)
+	key         string
+	label       string
+	section     string
+	needsTarget bool // false для проверок, которые смотрят на само устройство, а не на цель
+	handler     func(ctx context.Context, target string)
 }
 
 func buildMenu() []menuItem {
+	basic := "БАЗОВЫЕ ПРОВЕРКИ СВЯЗИ"
+	osint := "ВНЕШНИЕ СЕРВИСЫ АНАЛИЗА"
+	block := "АНАЛИЗ МЕТОДОВ БЛОКИРОВКИ (РКН)"
+	// Раздел "САМОПРОВЕРКА" реализует методику выявления VPN/Proxy (см.
+	// методичку) в обратную сторону: не для поиска чужих пользователей, а
+	// чтобы оператор своего VPN-сервиса увидел те же признаки на СВОЁМ
+	// сервере и СВОЁМ устройстве, что видит сторона, применяющая методику —
+	// и мог их скорректировать.
+	selfcheck := "САМОПРОВЕРКА НА VPN/PROXY-ПРИЗНАКИ"
+
 	return []menuItem{
-		{"1", "Security Audit", "БАЗОВЫЕ ПРОВЕРКИ СВЯЗИ", func(ctx context.Context, t string) { securityAudit(ctx, t) }},
-		{"2", "SSL Deep Checker", "БАЗОВЫЕ ПРОВЕРКИ СВЯЗИ", sslChecker},
-		{"3", "Port Scanner", "БАЗОВЫЕ ПРОВЕРКИ СВЯЗИ", portScanner},
-		{"4", "Tracert Test", "БАЗОВЫЕ ПРОВЕРКИ СВЯЗИ", tracertTest},
-		{"5", "Ping (8KB)", "БАЗОВЫЕ ПРОВЕРКИ СВЯЗИ", func(ctx context.Context, t string) { pingTest(ctx, t, "8192") }},
-		{"6", "Ping (16KB)", "БАЗОВЫЕ ПРОВЕРКИ СВЯЗИ", func(ctx context.Context, t string) { pingTest(ctx, t, "16384") }},
+		{key: "1", label: "Security Audit", section: basic, needsTarget: true, handler: securityAudit},
+		{key: "2", label: "SSL Deep Checker", section: basic, needsTarget: true, handler: sslChecker},
+		{key: "3", label: "Port Scanner", section: basic, needsTarget: true, handler: portScanner},
+		{key: "4", label: "Tracert Test", section: basic, needsTarget: true, handler: tracertTest},
+		{key: "5", label: "Ping (8KB)", section: basic, needsTarget: true, handler: func(ctx context.Context, t string) { pingTest(ctx, t, "8192") }},
+		{key: "6", label: "Ping (16KB)", section: basic, needsTarget: true, handler: func(ctx context.Context, t string) { pingTest(ctx, t, "16384") }},
 
-		{"7", "BGP.he.net", "ВНЕШНИЕ СЕРВИСЫ АНАЛИЗА", func(ctx context.Context, t string) { openExternal(t, "https://bgp.he.net/dns/") }},
-		{"8", "Censys.io", "ВНЕШНИЕ СЕРВИСЫ АНАЛИЗА", func(ctx context.Context, t string) { openExternal(t, "https://censys.io/ipv4?q=") }},
-		{"9", "BGP.tools", "ВНЕШНИЕ СЕРВИСЫ АНАЛИЗА", func(ctx context.Context, t string) { openExternal(t, "https://bgp.tools/search?q=") }},
+		{key: "7", label: "BGP.he.net", section: osint, needsTarget: true, handler: func(ctx context.Context, t string) { openExternal(t, "https://bgp.he.net/dns/") }},
+		{key: "8", label: "Censys.io", section: osint, needsTarget: true, handler: func(ctx context.Context, t string) { openExternal(t, "https://censys.io/ipv4?q=") }},
+		{key: "9", label: "BGP.tools", section: osint, needsTarget: true, handler: func(ctx context.Context, t string) { openExternal(t, "https://bgp.tools/search?q=") }},
 
-		{"10", "TCP RST Check", "АНАЛИЗ МЕТОДОВ БЛОКИРОВКИ (РКН)", func(ctx context.Context, t string) {
+		{key: "10", label: "TCP RST Check", section: block, needsTarget: true, handler: func(ctx context.Context, t string) {
 			checkTCPRst(ctx, t, 443)
 			checkTCPRst(ctx, t, 80)
 		}},
-		{"11", "QUIC Check", "АНАЛИЗ МЕТОДОВ БЛОКИРОВКИ (РКН)", func(ctx context.Context, t string) { checkQUIC(ctx, t, 443) }},
-		{"12", fmt.Sprintf("Block (%dKB)", config.Default().BlockSmallKB), "АНАЛИЗ МЕТОДОВ БЛОКИРОВКИ (РКН)", func(ctx context.Context, t string) {
+		{key: "11", label: "QUIC Check", section: block, needsTarget: true, handler: func(ctx context.Context, t string) { checkQUIC(ctx, t, 443) }},
+		{key: "12", label: fmt.Sprintf("Block (%dKB)", config.Default().BlockSmallKB), section: block, needsTarget: true, handler: func(ctx context.Context, t string) {
 			checkBlockTransfer(ctx, t, 443, cfg.BlockSmallKB)
 		}},
-		{"13", fmt.Sprintf("Block (%dKB)", config.Default().BlockLargeKB), "АНАЛИЗ МЕТОДОВ БЛОКИРОВКИ (РКН)", func(ctx context.Context, t string) {
+		{key: "13", label: fmt.Sprintf("Block (%dKB)", config.Default().BlockLargeKB), section: block, needsTarget: true, handler: func(ctx context.Context, t string) {
 			checkBlockTransfer(ctx, t, 443, cfg.BlockLargeKB)
 		}},
+
+		{key: "14", label: "GeoIP/ASN/Hosting (target)", section: selfcheck, needsTarget: true, handler: geoipCheck},
+		{key: "15", label: "RTT / задержка (target)", section: selfcheck, needsTarget: true, handler: rttCheck},
+		{key: "16", label: "Интерфейсы (это устройство)", section: selfcheck, needsTarget: false, handler: localInterfaceCheck},
+		{key: "17", label: "Маршруты (это устройство)", section: selfcheck, needsTarget: false, handler: localRouteCheck},
+		{key: "18", label: "DNS (это устройство)", section: selfcheck, needsTarget: false, handler: localDNSCheck},
 	}
 }
 
@@ -369,9 +402,9 @@ func main() {
 	cfg = loaded
 
 	menu := buildMenu()
-	dispatch := make(map[string]func(ctx context.Context, target string), len(menu))
+	dispatch := make(map[string]menuItem, len(menu))
 	for _, it := range menu {
-		dispatch[it.key] = it.handler
+		dispatch[it.key] = it
 	}
 
 	for {
@@ -385,15 +418,18 @@ func main() {
 			break
 		}
 
-		handler, ok := dispatch[choice]
+		item, ok := dispatch[choice]
 		if !ok {
 			logger.Error("Неизвестный пункт меню: %s", choice)
 			continue
 		}
 
-		target := getTarget()
-		if target == "" {
-			continue
+		target := ""
+		if item.needsTarget {
+			target = getTarget()
+			if target == "" {
+				continue
+			}
 		}
 
 		fmt.Printf("\n%s\n", strings.Repeat("—", 64))
@@ -401,7 +437,7 @@ func main() {
 		// Общий таймаут на всю проверку — раньше traceroute/ping/browser
 		// не имели контекста и могли зависнуть на неопределённое время.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		handler(ctx, target)
+		item.handler(ctx, target)
 		cancel()
 
 		fmt.Printf("\n%s[ Нажмите Enter для продолжения ]%s", yellow(""), reset(""))
