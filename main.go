@@ -375,6 +375,8 @@ func buildMenu() []menuItem {
 		{key: "16", label: "Интерфейсы (это устройство)", section: selfcheck, needsTarget: false, handler: localInterfaceCheck},
 		{key: "17", label: "Маршруты (это устройство)", section: selfcheck, needsTarget: false, handler: localRouteCheck},
 		{key: "18", label: "DNS (это устройство)", section: selfcheck, needsTarget: false, handler: localDNSCheck},
+		{key: "19", label: "Проверить IP в списке сканеров", section: selfcheck, needsTarget: true, handler: scannerLookupCheck},
+		{key: "20", label: "Входящие подключения vs список сканеров (сервер)", section: selfcheck, needsTarget: false, handler: serverScanCheck},
 	}
 }
 
