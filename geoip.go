@@ -9,9 +9,10 @@ import (
 	"rkn-checker/internal/logger"
 )
 
-// geoipResponse — поля ответа ip-api.com (бесплатный тариф, без ключа).
-// hosting/proxy/mobile — ровно те признаки, что раздел 5.4 методики описывает
-// как "определение ASN и типа сети" и "проверка в репутационных списках".
+// geoipResponse — fields returned by ip-api.com (free tier, no key required).
+// hosting/proxy/mobile are exactly the signals a GeoIP/ASN classification
+// section of the detection methodology describes as "network type
+// determination" and "reputation list lookup".
 type geoipResponse struct {
 	Status     string `json:"status"`
 	Message    string `json:"message"`
@@ -27,18 +28,18 @@ type geoipResponse struct {
 	Query      string `json:"query"`
 }
 
-// geoipCheck запрашивает публичный GeoIP/ASN сервис и показывает те же
-// признаки, по которым раздел 5 методики предлагает классифицировать IP:
-// страну, ASN/организацию, принадлежность к хостингу и репутационный флаг
-// VPN/Proxy/TOR. Полезно как самопроверка: именно так будет выглядеть ваш
-// собственный exit-IP для стороны, применяющей методику.
+// geoipCheck queries a public GeoIP/ASN service and shows the same signals
+// the methodology uses to classify an IP: country, ASN/organization,
+// hosting-provider membership, and a reputation flag for known VPN/Proxy/TOR
+// nodes. Useful as a self-check: this is exactly how your own exit IP would
+// look to a party applying the methodology.
 //
-// Источник — ip-api.com, бесплатный тариф (без ключа, до 45 запросов/мин,
-// без HTTPS на бесплатном плане). Для продакшн-использования по методике
-// заявлен «РАНР», а до его ввода — MaxMind/IP2Location; здесь используется
-// доступный публичный источник для быстрой самопроверки.
+// Source: ip-api.com, free tier (no key, up to 45 requests/min, no HTTPS on
+// the free plan). A production deployment of the methodology would use a
+// dedicated national registry or MaxMind/IP2Location; this uses a readily
+// available public source for a quick self-check.
 func geoipCheck(ctx context.Context, target string) {
-	logger.Info("GeoIP / ASN / Hosting анализ для %s (ip-api.com)...", target)
+	logger.Info("GeoIP / ASN / Hosting analysis for %s (ip-api.com)...", target)
 
 	url := fmt.Sprintf(
 		"http://ip-api.com/json/%s?fields=status,message,country,regionName,city,isp,org,as,hosting,proxy,mobile,query",
@@ -46,21 +47,21 @@ func geoipCheck(ctx context.Context, target string) {
 	)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		logger.Error("Не удалось собрать запрос: %v", err)
+		logger.Error("Failed to build request: %v", err)
 		return
 	}
 
 	client := &http.Client{Timeout: cfg.TLSTimeout()}
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Error("Запрос к ip-api.com не удался: %v", err)
+		logger.Error("Request to ip-api.com failed: %v", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	var data geoipResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		logger.Error("Не удалось разобрать ответ ip-api.com: %v", err)
+		logger.Error("Failed to parse ip-api.com response: %v", err)
 		return
 	}
 	if data.Status != "success" {
@@ -68,23 +69,23 @@ func geoipCheck(ctx context.Context, target string) {
 		return
 	}
 
-	fmt.Printf(" %s • Резолвится в:   %s\n", white(""), data.Query)
-	fmt.Printf(" %s • Страна/регион:  %s, %s (%s)\n", white(""), data.Country, data.RegionName, data.City)
-	fmt.Printf(" %s • ISP:            %s\n", white(""), data.ISP)
-	fmt.Printf(" %s • Организация:    %s\n", white(""), data.Org)
-	fmt.Printf(" %s • ASN:            %s\n", white(""), data.AS)
+	fmt.Printf(" %s • Resolves to:      %s\n", white(""), data.Query)
+	fmt.Printf(" %s • Country/region:   %s, %s (%s)\n", white(""), data.Country, data.RegionName, data.City)
+	fmt.Printf(" %s • ISP:              %s\n", white(""), data.ISP)
+	fmt.Printf(" %s • Organization:     %s\n", white(""), data.Org)
+	fmt.Printf(" %s • ASN:              %s\n", white(""), data.AS)
 
 	if data.Hosting {
-		logger.Warn("Hosting: ДА — диапазон принадлежит дата-центру/хостеру (типичный признак VPN/Proxy-инфраструктуры, п.5.4)")
+		logger.Warn("Hosting: YES — range belongs to a data center/hosting provider (a typical sign of VPN/Proxy infrastructure)")
 	} else {
-		logger.Success("Hosting: нет — диапазон не размечен как дата-центр")
+		logger.Success("Hosting: no — range is not flagged as a data center")
 	}
 	if data.Proxy {
-		logger.Warn("Reputation: IP числится в базе публичных VPN/Proxy/TOR-узлов (п.5.4)")
+		logger.Warn("Reputation: IP is listed in a public VPN/Proxy/TOR node database")
 	} else {
-		logger.Success("Reputation: в репутационных списках VPN/Proxy/TOR не значится")
+		logger.Success("Reputation: not listed in VPN/Proxy/TOR reputation lists")
 	}
 	if data.Mobile {
-		fmt.Printf(" %s • Сеть определена как мобильная (сотовый оператор)\n", cyan(""))
+		fmt.Printf(" %s • Network flagged as mobile (cellular carrier)\n", cyan(""))
 	}
 }

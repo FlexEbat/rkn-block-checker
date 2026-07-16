@@ -1,114 +1,149 @@
 # RKN Block Checker
 
-Утилита командной строки, написанная на языке Go, предназначенная для сетевой диагностики и анализа доступности веб-ресурсов. Основная цель программы — выявление причин ограничения доступа к серверам, тестирование сетевых маршрутов и определение паттернов блокировок, применяемых системами глубокого анализа трафика (DPI), включая технические средства противодействия угрозам (ТСПУ).
+A command-line utility written in Go for network diagnostics and website reachability analysis. Its main purpose is identifying why a server is being restricted, testing network paths, and detecting blocking patterns applied by deep packet inspection (DPI) systems, including Russia's technical countermeasures against threats (TSPU).
 
-Дополнительно программа умеет проводить самопроверку: показывает, какие признаки использования VPN/Proxy видны на **вашем собственном** сервере и **вашем собственном** устройстве — те же признаки, по которым такие сервисы принято выявлять — чтобы их можно было оценить и скорректировать.
+The tool also includes a self-check mode: it shows which VPN/Proxy detection signals are visible on **your own** server and **your own** device — the same signals such detection is normally based on — so you can evaluate and fix them.
 
-## Описание архитектуры и методов проверки
+## Architecture and check methods
 
-Программа работает в интерактивном режиме и разделена на четыре логических блока. Проверки, работающие с удалённой целью, принимают IP-адрес или доменное имя. Ввод разбирается через `net/url`, поэтому корректно обрабатываются префиксы протоколов в любом регистре (`http://`, `HTTPS://`), пути после хоста, порт в адресе и IPv6 в квадратных скобках. Проверки, работающие с локальным устройством, цель не запрашивают.
+The program runs interactively and is split into four logical sections. Checks that work against a remote target accept an IP address or domain name. Input is parsed via `net/url`, so protocol prefixes in any case (`http://`, `HTTPS://`), paths after the host, a port in the address, and bracketed IPv6 are all handled correctly. Checks that work against the local device don't prompt for a target.
 
-Каждая проверка выполняется с общим таймаутом 30 секунд (через `context.Context`) — зависшие `traceroute`, `ping` или сетевые вызовы не блокируют программу бесконечно.
+Every check runs with an overall 30-second timeout (via `context.Context`) — a hung `traceroute`, `ping`, or network call no longer blocks the program indefinitely. The connection monitor (menu item 20) is the one exception: it manages its own duration and Ctrl+C handling, since it's meant to run far longer than 30 seconds.
 
-### 1. Базовые проверки связи
+### 1. Basic connectivity checks
 
-Данный модуль выполняет стандартную диагностику доступности и безопасности целевого узла.
+Standard reachability and security diagnostics for the target host.
 
-*   **Security Audit**: Осуществляет тестовый HTTP-запрос к узлу. Анализирует полученные заголовки ответа на наличие механизмов защиты: Strict-Transport-Security (HSTS) и Content-Security-Policy (CSP), а также на признаки промежуточного proxy — заголовки `X-Forwarded-For`, `Forwarded`, `Via`.
-*   **SSL Deep Checker**: Устанавливает TLS-соединение (порт 443) с принудительным игнорированием невалидных сертификатов для целей отладки. Извлекает и выводит:
-    *   Common Name (Владелец).
-    *   Организацию и Common Name эмитента (Удостоверяющий центр).
-    *   Версию согласованного протокола (от TLS 1.0 до TLS 1.3).
-    *   Используемый набор шифров (Cipher Suite).
-    *   Даты начала и окончания действия сертификата с расчетом текущего статуса валидности.
-*   **Port Scanner**: Асинхронно выполняет TCP-подключения к списку портов, заданному в конфигурации (по умолчанию: 21 (FTP), 22 (SSH), 80 (HTTP), 443 (HTTPS), 3306 (MySQL), 3389 (RDP)). Таймаут на каждое подключение задаётся в `config.json` (по умолчанию 500 миллисекунд).
-*   **Tracert Test**: Вызывает штатную системную утилиту трассировки маршрута (`tracert` в среде Windows, `traceroute` в UNIX-системах) с выводом результатов в стандартный поток (stdout).
-*   **Ping (8KB / 16KB)**: Выполняет отправку четырех ICMP-запросов (echo request) с нестандартным, увеличенным размером пакета (8192 или 16384 байт). Использует ключи `-l` для Windows и `-s` для UNIX. Позволяет выявить проблемы с фрагментацией (MTU) и блокировки (drop) крупных пакетов на сетевом и транспортном уровнях.
+*   **Security Audit**: Sends a test HTTP request to the host. Checks the response headers for security mechanisms — Strict-Transport-Security (HSTS) and Content-Security-Policy (CSP) — and for signs of an intermediate proxy: `X-Forwarded-For`, `Forwarded`, `Via`.
+*   **SSL Deep Checker**: Opens a TLS connection (port 443) with certificate verification forcibly disabled for debugging purposes. Extracts and prints:
+    *   Common Name (subject).
+    *   Issuer organization and Common Name (certificate authority).
+    *   Negotiated protocol version (TLS 1.0 through TLS 1.3).
+    *   Cipher suite in use.
+    *   Validity start/end dates with a computed current status.
+*   **Port Scanner**: Asynchronously opens TCP connections to the port list from the config (default: 21 (FTP), 22 (SSH), 80 (HTTP), 443 (HTTPS), 3306 (MySQL), 3389 (RDP)). Per-connection timeout is set in `config.json` (500ms by default).
+*   **Tracert Test**: Runs the system's route-tracing utility (`tracert` on Windows, `traceroute` on UNIX) and streams its output to stdout.
+*   **Ping (8KB / 16KB)**: Sends four ICMP echo requests with an unusually large packet size (8192 or 16384 bytes), using `-l` on Windows and `-s` on UNIX. Helps surface MTU fragmentation issues and dropped large packets at the network/transport layer.
 
-### 2. Внешние сервисы анализа (OSINT)
+### 2. External analysis services (OSINT)
 
-Модуль формирует поисковые запросы на основе указанного хоста и открывает их в системном браузере по умолчанию через пакет `github.com/pkg/browser`.
+Builds search queries from the given host and opens them in the system's default browser via `github.com/pkg/browser`.
 
-*   **BGP.he.net**: Анализ DNS-записей, IP-адресов и маршрутизации.
-*   **Censys.io**: Поиск истории IP-адреса, открытых портов и связанных SSL-сертификатов.
-*   **BGP.tools**: Анализ данных об автономных системах (ASN) и пиринговых связях.
+*   **BGP.he.net**: DNS record, IP, and routing analysis.
+*   **Censys.io**: IP history, open ports, and associated SSL certificates.
+*   **BGP.tools**: Autonomous system (ASN) and peering data.
 
-### 3. Анализ методов блокировки (РКН)
+### 3. Blocking method analysis (RKN)
 
-Специализированный модуль для выявления характерных признаков вмешательства систем фильтрации трафика в процесс соединения.
+A specialized section for detecting characteristic signs of traffic-filtering interference in the connection.
 
-*   **TCP RST Check**: Выполняет TCP-подключение к портам 80 и 443. Программа перехватывает ошибки сокетов и анализирует их текстовое представление. Если в ответе содержится `connection reset` или `reset by peer`, фиксируется принудительный разрыв соединения, что является стандартным методом блокировки по SNI/IP со стороны ТСПУ.
-*   **QUIC Check**: Проверяет доступность узла по протоколу UDP с использованием HTTP/3 (QUIC) на порту 443. Отправляет ALPN-токены `h3`, `h2` и `http/1.1`. Позволяет проверить, заблокирован ли протокол QUIC полностью, что часто применяется провайдерами для принудительного перевода трафика на TCP для последующего анализа по SNI.
-*   **Block Transfer (8KB / 16KB)**: Метод выявления блокировок на основе анализа объема передаваемых данных. Устанавливает TLS-соединение с портом 443. Формирует HTTP GET-запрос, в который внедряется кастомный заголовок `X-Data`. Этот заголовок заполняется символами "A" (padding) таким образом, чтобы общий размер отправляемых данных составил ровно 8 или 16 килобайт (размеры настраиваются в конфигурации). После отправки программа ожидает ответ в течение 3 секунд. Тест позволяет определить, обрывает ли DPI-система сессию после прохождения определенного порога байт.
+*   **TCP RST Check**: Opens a TCP connection to ports 80 and 443. Catches socket errors and inspects their text — if it contains `connection reset` or `reset by peer`, a forced connection drop is flagged, a standard SNI/IP blocking method used by TSPU.
+*   **QUIC Check**: Checks UDP reachability using HTTP/3 (QUIC) on port 443, sending ALPN tokens `h3`, `h2`, and `http/1.1`. Lets you check whether QUIC is fully blocked, which providers often do to force traffic onto TCP for SNI-based inspection.
+*   **Block Transfer (8KB / 16KB)**: Detects blocking based on transferred data volume. Opens a TLS connection on port 443, builds an HTTP GET request with a custom `X-Data` header padded with "A" characters so the total sent size is exactly 8 or 16 kilobytes (sizes are configurable). Waits 3 seconds for a response. Reveals whether a DPI system drops the session after a certain byte threshold.
 
-### 4. Самопроверка на VPN/Proxy-признаки
+### 4. VPN/Proxy signal self-check
 
-Модуль показывает те же признаки, по которым принято выявлять использование VPN/Proxy — но применительно к **вашей собственной** инфраструктуре и устройству, а не к чужим пользователям.
+Shows the same signals commonly used to detect VPN/Proxy usage — but applied to **your own** infrastructure and device, not to someone else's users.
 
-*   **GeoIP/ASN/Hosting**: запрашивает публичный GeoIP-сервис (`ip-api.com`, бесплатный тариф) для указанного IP/домена и показывает страну, ASN, организацию и два ключевых репутационных флага — `hosting` (диапазон дата-центра) и `proxy` (числится в базах публичных VPN/Proxy/TOR-узлов).
-*   **RTT / задержка**: измеряет 5 TCP-подключений к порту 443 цели, показывает min/avg/max и разброс. Упрощённый метод — без базы «контрольных точек» (landmarks), поэтому аномалии нужно сопоставлять с результатом GeoIP-проверки вручную.
-*   **Интерфейсы (это устройство)**: перечисляет сетевые интерфейсы локальной машины (кроссплатформенно, через `net.Interfaces()`), подсвечивает активные интерфейсы с именами `tun`/`tap`/`wg`/`utun`/`ppp`/`wintun` и заниженным MTU (характерный признак VPN-туннеля).
-*   **Маршруты (это устройство)**: выводит таблицу маршрутизации (`ip route` / `netstat -rn` / `route print` — в зависимости от ОС) и предупреждает при обнаружении нескольких маршрутов по умолчанию.
-*   **DNS (это устройство)**: проверяет DNS-серверы устройства (`/etc/resolv.conf` или `ipconfig /all`) на частные/loopback-адреса — возможный признак перенаправления резолвинга в виртуальный интерфейс.
-*   **Проверить IP в списке сканеров**: сверяет введённый IP/домен со встроенным списком известных диапазонов инфраструктуры активного зондирования серверов (см. `scanlist.go`).
-*   **Входящие подключения vs список сканеров (сервер)**: снимок текущих установленных TCP-подключений к этой машине (`ss -tn state established` / `netstat`) с проверкой удалённых адресов против того же списка. Разовый снимок на момент запуска, не постоянный мониторинг.
+*   **GeoIP/ASN/Hosting**: Queries a public GeoIP service (`ip-api.com`, free tier) for the given IP/domain and shows country, ASN, organization, and two key reputation flags — `hosting` (data-center range) and `proxy` (listed in public VPN/Proxy/TOR node databases).
+*   **RTT / latency**: Measures 5 TCP connections to the target's port 443, showing min/avg/max and spread. A simplified method — there's no "reference landmark" database, so anomalies need to be cross-checked manually against the GeoIP result.
+*   **Interfaces (this device)**: Lists this machine's network interfaces (cross-platform, via `net.Interfaces()`), highlighting active interfaces named `tun`/`tap`/`wg`/`utun`/`ppp`/`wintun` with an unusually low MTU (a typical VPN tunnel signature).
+*   **Routes (this device)**: Prints the routing table (`ip route` / `netstat -rn` / `route print`, depending on OS) and warns if multiple default routes are found.
+*   **DNS (this device)**: Checks the device's DNS servers (`/etc/resolv.conf` or `ipconfig /all`) for private/loopback addresses — a possible sign of resolving being redirected through a virtual interface.
+*   **Check IP against scanner list**: Checks a given IP/domain against a built-in list of known scanning-infrastructure ranges (see `scanlist.go`).
+*   **Connections vs scanner list (server)**: Lets you choose between a one-off snapshot of current established TCP connections and continuous monitoring (see below) that polls repeatedly and checks remote addresses against the same list.
 
-Пункты «Интерфейсы», «Маршруты», «DNS» и «Входящие подключения» смотрят на локальную машину и не запрашивают цель.
+Items 16–18 and 20 look at the local machine and don't prompt for a target.
 
-Список известных диапазонов сканеров (`scanlist.go`) ведётся вручную и может устаревать — используйте его вместе с другими средствами защиты (firewall, fail2ban и т.п.), а не как единственный барьер.
+The scanner list (`scanlist.go`) is maintained by hand and can go stale — use it alongside other defenses (firewall, fail2ban, etc.), not as your only barrier.
 
-## Меню
+## Live connection monitoring (menu item 20)
 
-| № | Проверка | Блок | Нужна цель |
+Selecting item 20 first asks how you want to run the check:
+
+```
+Mode:
+  1) Single snapshot (check current connections once)
+  2) Continuous monitoring (poll repeatedly for a chosen duration)
+```
+
+**Single snapshot** behaves like before: one look at currently established connections, checked against the scanner list.
+
+**Continuous monitoring** then asks for a duration:
+
+```
+Monitoring duration — examples: 30s, 5m, 1h, 1d, 2h30m
+Enter 0 or inf for unlimited (stop anytime with Ctrl+C)
+```
+
+Accepted formats:
+
+| Input | Meaning |
+|---|---|
+| `30s`, `5m`, `1h`, `2h30m` | Any value `time.ParseDuration` understands (s/m/h, combinable) |
+| `1d`, `2d` | Whole days (a unit Go's standard duration parser doesn't support natively) |
+| `0`, `inf`, `unlimited`, `infinite`, `forever`, empty input | Run indefinitely until you press Ctrl+C |
+
+Once running, the monitor polls established connections every 5 seconds and prints a timestamped warning only the **first** time a given remote IP matches the scanner list during that session — a long-lived matching connection won't spam the same warning every cycle. It stops when:
+
+* the configured duration elapses, or
+* you press Ctrl+C, or
+* it's running unlimited and you interrupt it.
+
+On exit it prints a short summary: how long it ran, how many polling cycles completed, and the total number of new matches found.
+
+## Menu
+
+| # | Check | Section | Needs a target |
 |---|---|---|---|
-| 1 | Security Audit | Базовые проверки связи | да |
-| 2 | SSL Deep Checker | Базовые проверки связи | да |
-| 3 | Port Scanner | Базовые проверки связи | да |
-| 4 | Tracert Test | Базовые проверки связи | да |
-| 5 | Ping (8KB) | Базовые проверки связи | да |
-| 6 | Ping (16KB) | Базовые проверки связи | да |
-| 7 | BGP.he.net | Внешние сервисы анализа | да |
-| 8 | Censys.io | Внешние сервисы анализа | да |
-| 9 | BGP.tools | Внешние сервисы анализа | да |
-| 10 | TCP RST Check | Анализ методов блокировки (РКН) | да |
-| 11 | QUIC Check | Анализ методов блокировки (РКН) | да |
-| 12 | Block (8KB) | Анализ методов блокировки (РКН) | да |
-| 13 | Block (16KB) | Анализ методов блокировки (РКН) | да |
-| 14 | GeoIP/ASN/Hosting | Самопроверка на VPN/Proxy-признаки | да |
-| 15 | RTT / задержка | Самопроверка на VPN/Proxy-признаки | да |
-| 16 | Интерфейсы (это устройство) | Самопроверка на VPN/Proxy-признаки | нет |
-| 17 | Маршруты (это устройство) | Самопроверка на VPN/Proxy-признаки | нет |
-| 18 | DNS (это устройство) | Самопроверка на VPN/Proxy-признаки | нет |
-| 19 | Проверить IP в списке сканеров | Самопроверка на VPN/Proxy-признаки | да |
-| 20 | Входящие подключения vs список сканеров (сервер) | Самопроверка на VPN/Proxy-признаки | нет |
-| 0 | Выход | — | — |
+| 1 | Security Audit | Basic connectivity checks | yes |
+| 2 | SSL Deep Checker | Basic connectivity checks | yes |
+| 3 | Port Scanner | Basic connectivity checks | yes |
+| 4 | Tracert Test | Basic connectivity checks | yes |
+| 5 | Ping (8KB) | Basic connectivity checks | yes |
+| 6 | Ping (16KB) | Basic connectivity checks | yes |
+| 7 | BGP.he.net | External analysis services | yes |
+| 8 | Censys.io | External analysis services | yes |
+| 9 | BGP.tools | External analysis services | yes |
+| 10 | TCP RST Check | Blocking method analysis (RKN) | yes |
+| 11 | QUIC Check | Blocking method analysis (RKN) | yes |
+| 12 | Block (8KB) | Blocking method analysis (RKN) | yes |
+| 13 | Block (16KB) | Blocking method analysis (RKN) | yes |
+| 14 | GeoIP/ASN/Hosting | VPN/Proxy signal self-check | yes |
+| 15 | RTT / latency | VPN/Proxy signal self-check | yes |
+| 16 | Interfaces (this device) | VPN/Proxy signal self-check | no |
+| 17 | Routes (this device) | VPN/Proxy signal self-check | no |
+| 18 | DNS (this device) | VPN/Proxy signal self-check | no |
+| 19 | Check IP against scanner list | VPN/Proxy signal self-check | yes |
+| 20 | Connections vs scanner list (server) | VPN/Proxy signal self-check | no |
+| 0 | Quit | — | — |
 
-## Структура проекта
+## Project structure
 
 ```
 rkn-checker/
-├── main.go                    # точка входа, меню, диспетчер проверок
-├── tlsconfig.go                # единая TLS-конфигурация для целей анализа блокировок
-├── geoip.go                    # GeoIP/ASN/Hosting/Proxy-репутация (ip-api.com)
-├── rtt.go                       # упрощённый RTT/задержка-анализ
-├── selfcheck.go                 # локальные интерфейсы/маршруты/DNS этого устройства
-├── scanlist.go                  # встроенный список известных диапазонов сканирующей инфраструктуры
-├── scancheck.go                 # сверка IP/активных подключений со списком сканеров
+├── main.go                    # entry point, menu, check dispatcher
+├── tlsconfig.go                # single TLS config for blocking-analysis purposes
+├── geoip.go                    # GeoIP/ASN/Hosting/Proxy reputation (ip-api.com)
+├── rtt.go                       # simplified RTT/latency analysis
+├── selfcheck.go                 # this device's local interfaces/routes/DNS
+├── scanlist.go                  # built-in list of known scanning-infrastructure ranges
+├── scancheck.go                 # IP/active-connection checks against the scanner list + live monitor
 ├── internal/
-│   ├── logger/                 # цветной вывод: Info / Success / Warn / Error
+│   ├── logger/                 # colored output: Info / Success / Warn / Error
 │   │   └── logger.go
-│   └── config/                 # загрузка настроек из config.json + значения по умолчанию
+│   └── config/                 # loads settings from config.json + defaults
 │       └── config.go
-├── config.example.json         # пример файла конфигурации
+├── config.example.json         # example config file
 ├── go.mod
 └── README.md
 ```
 
-## Конфигурация
+## Configuration
 
-Порты сканирования и таймауты вынесены из кода в `config.json`, который программа ищет в рабочей директории при запуске. Файл опционален — при его отсутствии используются встроенные значения по умолчанию; при наличии файла переопределяются только заданные в нём поля.
+Scan ports and timeouts are pulled out of the code into `config.json`, which the program looks for in the working directory at startup. The file is optional — if absent, built-in defaults are used; if present, only the fields it sets are overridden.
 
-Скопируйте пример и при необходимости отредактируйте:
+Copy the example and edit as needed:
 
 ```bash
 cp config.example.json config.json
@@ -126,38 +161,38 @@ cp config.example.json config.json
 }
 ```
 
-| Поле              | Назначение                                              |
-|-------------------|----------------------------------------------------------|
-| `ports`           | Список портов для Port Scanner                          |
-| `dial_timeout_ms` | Таймаут TCP-подключения (TCP RST Check, RTT-анализ)       |
-| `tls_timeout_ms`  | Таймаут TLS-подключения (SSL Checker, Security Audit, Block Transfer, GeoIP) |
-| `quic_timeout_ms` | Таймаут QUIC-подключения                                 |
-| `scan_timeout_ms` | Таймаут одного подключения при сканировании портов       |
-| `block_small_kb`  | Размер блока для теста "Block (small)"                   |
-| `block_large_kb`  | Размер блока для теста "Block (large)"                   |
+| Field              | Purpose                                              |
+|--------------------|--------------------------------------------------------|
+| `ports`            | Port list for Port Scanner                             |
+| `dial_timeout_ms`  | TCP connect timeout (TCP RST Check, RTT check)          |
+| `tls_timeout_ms`   | TLS connect timeout (SSL Checker, Security Audit, Block Transfer, GeoIP) |
+| `quic_timeout_ms`  | QUIC connect timeout                                    |
+| `scan_timeout_ms`  | Per-connection timeout during port scanning             |
+| `block_small_kb`   | Block size for the "Block (small)" test                 |
+| `block_large_kb`   | Block size for the "Block (large)" test                 |
 
-Если `config.json` повреждён (невалидный JSON), программа выведет ошибку при старте и продолжит работу со значениями по умолчанию.
+If `config.json` is malformed (invalid JSON), the program prints an error at startup and continues with default values.
 
-## Системные требования
+## System requirements
 
-*   Среда выполнения: Go 1.21 или новее.
-*   Операционная система: Windows, Linux или macOS.
-*   Привилегии: Для корректной работы функций `Tracert Test` и `Ping` в некоторых операционных системах (особенно Linux) требуются права суперпользователя (root) или наличие capabilities `CAP_NET_RAW` для создания ICMP-сокетов.
-*   Сеть: пункты «GeoIP/ASN/Hosting» и OSINT-раздел требуют исходящего доступа к `ip-api.com`, `bgp.he.net`, `censys.io`, `bgp.tools` соответственно.
+*   Runtime: Go 1.21 or newer.
+*   OS: Windows, Linux, or macOS.
+*   Privileges: `Tracert Test` and `Ping` may require superuser (root) privileges or the `CAP_NET_RAW` capability on some operating systems (especially Linux) to create ICMP sockets.
+*   Network: "GeoIP/ASN/Hosting" and the OSINT section need outbound access to `ip-api.com`, `bgp.he.net`, `censys.io`, and `bgp.tools` respectively.
 
-## Установка и запуск
+## Installation and usage
 
-1. Склонируйте репозиторий на локальную машину:
+1. Clone the repository:
 ```bash
 git clone https://github.com/FlexEbat/rkn-block-checker.git
 cd rkn-block-checker
 ```
 
-2. Загрузите необходимые зависимости (fatih/color, pkg/browser, quic-go):
+2. Fetch dependencies (fatih/color, pkg/browser, quic-go):
 ```bash
 go mod tidy
 ```
-Если go.mod отсутствует в вашем репозитории, инициализируйте его и установите пакеты вручную:
+If go.mod is missing from your copy, initialize it and install packages manually:
 ```bash
 go mod init rkn-checker
 go get github.com/fatih/color
@@ -165,18 +200,18 @@ go get github.com/pkg/browser
 go get github.com/quic-go/quic-go
 ```
 
-3. (Опционально) создайте `config.json` из примера, чтобы переопределить порты и таймауты:
+3. (Optional) create `config.json` from the example to override ports and timeouts:
 ```bash
 cp config.example.json config.json
 ```
 
-4. Запустите утилиту:
+4. Run the tool:
 ```bash
 go run .
 ```
 
-Для сборки исполняемого бинарного файла используйте команду `go build -o rkn_checker .`.
+To build a binary, use `go build -o rkn_checker .`.
 
-## Лицензия
+## License
 
-Распространяется на условиях лицензии MIT. Программа предоставляется исключительно в целях диагностики сетей, тестирования и ознакомления с принципами работы сетевых протоколов. Одобрения на использование утилиты в деструктивных целях не предоставляется.
+Distributed under the MIT License. This program is provided solely for network diagnostics, testing, and learning about how network protocols work. No endorsement is given for using this tool for destructive purposes.

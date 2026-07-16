@@ -7,13 +7,13 @@ import (
 	"rkn-checker/internal/logger"
 )
 
-// knownScannerRanges — известные IP-адреса и подсети инфраструктуры активного
-// зондирования (сканирования серверов для последующей блокировки по
-// протоколу/сигнатуре). Список ведётся вручную и может устаревать — не
-// полагайтесь на него как на единственный источник защиты, используйте вместе
-// с другими средствами (firewall, fail2ban и т.д.).
+// knownScannerRanges — known IP addresses and subnets belonging to active
+// probing infrastructure (scanning servers for later protocol/signature-based
+// blocking). This list is maintained manually and can go stale — don't rely
+// on it as your only line of defense; use it together with other tools
+// (firewall, fail2ban, etc).
 //
-// Одиночные IP хранятся как есть, при парсинге им присваивается маска /32.
+// Single IPs are stored as-is; a /32 mask is assigned to them at parse time.
 var knownScannerRanges = []string{
 	"5.143.224.100/30",
 	"5.143.224.104/30",
@@ -167,8 +167,8 @@ var (
 	scannerNets     []*net.IPNet
 )
 
-// loadScannerNets парсит knownScannerRanges один раз и кеширует результат.
-// Одиночные адреса без маски дополняются до /32 (IPv4) перед парсингом.
+// loadScannerNets parses knownScannerRanges once and caches the result.
+// Bare addresses without a mask are padded to /32 (IPv4) before parsing.
 func loadScannerNets() []*net.IPNet {
 	scannerNetsOnce.Do(func() {
 		scannerNets = make([]*net.IPNet, 0, len(knownScannerRanges))
@@ -179,7 +179,7 @@ func loadScannerNets() []*net.IPNet {
 			}
 			_, ipNet, err := net.ParseCIDR(cidr)
 			if err != nil {
-				logger.Warn("Не удалось разобрать запись в списке сканеров %q: %v", entry, err)
+				logger.Warn("Failed to parse scanner list entry %q: %v", entry, err)
 				continue
 			}
 			scannerNets = append(scannerNets, ipNet)
@@ -197,9 +197,9 @@ func containsSlash(s string) bool {
 	return false
 }
 
-// matchScanner проверяет IP на вхождение в список известных диапазонов
-// сканирующей инфраструктуры. Возвращает подходящую подсеть/адрес (в виде
-// строки CIDR) и true, если совпадение найдено.
+// matchScanner checks an IP against the list of known scanning
+// infrastructure ranges. Returns the matching subnet/address (as a CIDR
+// string) and true if a match was found.
 func matchScanner(ip net.IP) (string, bool) {
 	if ip == nil {
 		return "", false

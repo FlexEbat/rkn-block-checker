@@ -53,7 +53,7 @@ func clear() {
 func drawHeader() {
 	clear()
 	fmt.Printf("%s\n", cyan("╔══════════════════════════════════════════════════════════════════╗"))
-	fmt.Printf("%s %s %s\n", cyan("║"), white("   RKN BLOCK CHECKER - АНАЛИЗ БЛОКИРОВОК ХОСТИНГА   "), cyan("   ║"))
+	fmt.Printf("%s %s %s\n", cyan("║"), white("   RKN BLOCK CHECKER - HOSTING BLOCK ANALYSIS   "), cyan("   ║"))
 	fmt.Printf("%s\n", cyan("╚══════════════════════════════════════════════════════════════════╝"))
 }
 
@@ -71,13 +71,13 @@ func drawBox(title string, options []string) {
 	fmt.Printf(" %s└──────────────────────────────┴───────────────────────────────┘\n", white(""))
 }
 
-// parseTarget нормализует ввод пользователя в чистый hostname/IP.
+// parseTarget normalizes user input into a clean hostname/IP.
 //
-// Раньше это делалось строковыми Replace("http://", "") — что ломалось на
-// HTTPS:// (регистр), пробелах, URL с портом или путём, и на IPv6 в скобках.
-// net/url.Parse умеет всё это из коробки, но требует схему для корректного
-// разбора host:port — поэтому если пользователь ввёл голый домен/IP без
-// схемы, мы её на лету подставляем перед парсингом.
+// This used to be done with plain string Replace("http://", "") calls, which
+// broke on HTTPS:// (case), stray whitespace, a URL with a port or path, and
+// bracketed IPv6. net/url.Parse handles all of that out of the box, but it
+// needs a scheme to correctly split host:port — so if the user typed a bare
+// domain/IP with no scheme, we add one on the fly before parsing.
 func parseTarget(input string) string {
 	raw := strings.TrimSpace(input)
 	if raw == "" {
@@ -86,26 +86,26 @@ func parseTarget(input string) string {
 
 	candidate := raw
 	if !strings.Contains(candidate, "://") {
-		candidate = "//" + candidate // url.Parse трактует //host как scheme-relative
+		candidate = "//" + candidate // url.Parse treats //host as scheme-relative
 	}
 
 	if u, err := url.Parse(candidate); err == nil && u.Hostname() != "" {
 		return u.Hostname()
 	}
 
-	// Фоллбэк на случай совсем экзотического ввода, который net/url не смог
-	// разобрать (например, голый IPv6 без скобок и без пути).
+	// Fallback for exotic input net/url couldn't parse (e.g. a bare IPv6
+	// address without brackets and without a path).
 	return strings.Trim(raw, "[]/ ")
 }
 
 func getTarget() string {
-	fmt.Printf("\n %s >> %sВведите IP или Домен для анализа\n", cyan(""), white(""))
+	fmt.Printf("\n %s >> %sEnter an IP or domain to analyze\n", cyan(""), white(""))
 	fmt.Printf(" %s >> ", cyan(""))
 	return parseTarget(readInput())
 }
 
 func sslChecker(ctx context.Context, target string) {
-	logger.Info("Глубокий анализ SSL для %s...", target)
+	logger.Info("Deep SSL analysis for %s...", target)
 
 	dialer := &tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: cfg.TLSTimeout()},
@@ -113,7 +113,7 @@ func sslChecker(ctx context.Context, target string) {
 	}
 	rawConn, err := dialer.DialContext(ctx, "tcp", target+":443")
 	if err != nil {
-		logger.Error("Ошибка SSL: %v", err)
+		logger.Error("SSL error: %v", err)
 		return
 	}
 	defer rawConn.Close()
@@ -121,23 +121,23 @@ func sslChecker(ctx context.Context, target string) {
 
 	certs := conn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
-		logger.Error("Цепочка сертификатов пуста")
+		logger.Error("Certificate chain is empty")
 		return
 	}
 	cert := certs[0]
-	logger.Success("ДЕТАЛИ СЕРТИФИКАТА:")
-	fmt.Printf(" %s • Владелец:    %s\n", white(""), cert.Subject.CommonName)
-	fmt.Printf(" %s • Кем выдан:   %s (%s)\n", white(""), cert.Issuer.Organization, cert.Issuer.CommonName)
-	fmt.Printf(" %s • Протокол:    %s\n", white(""), tlsProtocolName(conn.ConnectionState().Version))
-	fmt.Printf(" %s • Шифрование:  %s\n", white(""), tls.CipherSuiteName(conn.ConnectionState().CipherSuite))
-	fmt.Printf(" %s • Выдан:       %s\n", cyan(""), cert.NotBefore.Format("2006-01-02"))
-	fmt.Printf(" %s • Срок до:     %s\n", cyan(""), cert.NotAfter.Format("2006-01-02"))
+	logger.Success("CERTIFICATE DETAILS:")
+	fmt.Printf(" %s • Subject:      %s\n", white(""), cert.Subject.CommonName)
+	fmt.Printf(" %s • Issued by:    %s (%s)\n", white(""), cert.Issuer.Organization, cert.Issuer.CommonName)
+	fmt.Printf(" %s • Protocol:     %s\n", white(""), tlsProtocolName(conn.ConnectionState().Version))
+	fmt.Printf(" %s • Cipher:       %s\n", white(""), tls.CipherSuiteName(conn.ConnectionState().CipherSuite))
+	fmt.Printf(" %s • Issued on:    %s\n", cyan(""), cert.NotBefore.Format("2006-01-02"))
+	fmt.Printf(" %s • Valid until:  %s\n", cyan(""), cert.NotAfter.Format("2006-01-02"))
 
 	now := time.Now()
 	if now.Before(cert.NotAfter) && now.After(cert.NotBefore) {
-		logger.Success("Статус: АКТИВЕН")
+		logger.Success("Status: ACTIVE")
 	} else {
-		logger.Error("Статус: ПРОСРОЧЕН/НЕАКТИВЕН")
+		logger.Error("Status: EXPIRED/INACTIVE")
 	}
 }
 
@@ -157,25 +157,25 @@ func tlsProtocolName(v uint16) string {
 }
 
 func checkTCPRst(ctx context.Context, target string, port int) {
-	logger.Info("Проверка TCP RST на %s:%d...", target, port)
+	logger.Info("Checking TCP RST on %s:%d...", target, port)
 	address := fmt.Sprintf("%s:%d", target, port)
 
 	dialer := &net.Dialer{Timeout: cfg.DialTimeout()}
 	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		if strings.Contains(err.Error(), "connection reset") || strings.Contains(err.Error(), "reset by peer") {
-			logger.Error("%s:%d - Получен RST (Connection Reset)", target, port)
+			logger.Error("%s:%d - RST received (Connection Reset)", target, port)
 		} else {
-			logger.Error("%s:%d - Ошибка: %v", target, port, err)
+			logger.Error("%s:%d - Error: %v", target, port, err)
 		}
 		return
 	}
 	defer conn.Close()
-	logger.Success("%s:%d - Соединение установлено", target, port)
+	logger.Success("%s:%d - Connection established", target, port)
 }
 
 func checkQUIC(ctx context.Context, target string, port int) {
-	logger.Info("Проверка QUIC на %s:%d...", target, port)
+	logger.Info("Checking QUIC on %s:%d...", target, port)
 	address := fmt.Sprintf("%s:%d", target, port)
 
 	tlsConf := insecureTLSConfig("h3", "h2", "http/1.1")
@@ -185,15 +185,15 @@ func checkQUIC(ctx context.Context, target string, port int) {
 
 	conn, err := quic.DialAddr(ctx, address, tlsConf, nil)
 	if err != nil {
-		logger.Error("%s:%d - QUIC недоступен: %v", target, port, err)
+		logger.Error("%s:%d - QUIC unavailable: %v", target, port, err)
 		return
 	}
 	defer conn.CloseWithError(0, "")
-	logger.Success("%s:%d - QUIC доступен", target, port)
+	logger.Success("%s:%d - QUIC available", target, port)
 }
 
 func checkBlockTransfer(ctx context.Context, target string, port int, sizeKB int) {
-	logger.Info("Тестирование передачи блока %dKB на %s:%d...", sizeKB, target, port)
+	logger.Info("Testing %dKB block transfer to %s:%d...", sizeKB, target, port)
 	address := fmt.Sprintf("%s:%d", target, port)
 	data := []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nUser-Agent: Sentinel\r\n", target))
 	padding := strings.Repeat("A", sizeKB*1024-len(data)-4)
@@ -205,36 +205,36 @@ func checkBlockTransfer(ctx context.Context, target string, port int, sizeKB int
 	}
 	rawConn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
-		logger.Error("%s:%d - Ошибка TLS при отправке блока %dKB: %v", target, port, sizeKB, err)
+		logger.Error("%s:%d - TLS error while sending %dKB block: %v", target, port, sizeKB, err)
 		return
 	}
 	defer rawConn.Close()
 	conn := rawConn.(*tls.Conn)
 
 	if _, err = conn.Write(data); err != nil {
-		logger.Error("Ошибка отправки: %v", err)
+		logger.Error("Send error: %v", err)
 		return
 	}
 
 	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	buf := make([]byte, 1024)
 	if _, err = conn.Read(buf); err != nil {
-		logger.Warn("%s:%d - Блок %dKB отправлен, но ответ не получен (Timeout/Err: %v)", target, port, sizeKB, err)
+		logger.Warn("%s:%d - %dKB block sent, but no response received (Timeout/Err: %v)", target, port, sizeKB, err)
 	} else {
-		logger.Success("%s:%d - Блок %dKB принят сервером, получен ответ", target, port, sizeKB)
+		logger.Success("%s:%d - %dKB block accepted by the server, response received", target, port, sizeKB)
 	}
 }
 
 func securityAudit(ctx context.Context, target string) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+target, nil)
 	if err != nil {
-		logger.Error("Не удалось собрать запрос: %v", err)
+		logger.Error("Failed to build request: %v", err)
 		return
 	}
 	client := &http.Client{Timeout: cfg.TLSTimeout()}
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Error("Сайт недоступен: %v", err)
+		logger.Error("Site unreachable: %v", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -250,25 +250,26 @@ func securityAudit(ctx context.Context, target string) {
 	fmt.Printf("HSTS: %s\n", hsts)
 	fmt.Printf("CSP:  %s\n", csp)
 
-	// Раздел 10.2 методики: наличие X-Forwarded-For/Forwarded/Via в ответе
-	// может указывать на промежуточный proxy-узел на пути. Актуально для
-	// самопроверки за собственным reverse-proxy/CDN — легитимный CDN тоже
-	// может проставлять эти заголовки, поэтому это не жёсткий признак.
+	// A methodology section on proxy detection notes that X-Forwarded-For /
+	// Forwarded / Via in the response can indicate an intermediate proxy on
+	// the path. Relevant for self-checking behind your own reverse
+	// proxy/CDN — a legitimate CDN can add these headers too, so this is not
+	// a hard signal on its own.
 	proxyHeaders := []string{"X-Forwarded-For", "Forwarded", "Via"}
 	anyFound := false
 	for _, h := range proxyHeaders {
 		if v := resp.Header.Get(h); v != "" {
-			logger.Warn("Заголовок %s присутствует: %s (разд. 10.2 — возможный признак промежуточного proxy; легитимный CDN тоже может его проставлять)", h, v)
+			logger.Warn("Header %s is present: %s (possible sign of an intermediate proxy; a legitimate CDN can add it too)", h, v)
 			anyFound = true
 		}
 	}
 	if !anyFound {
-		logger.Success("Proxy-заголовки (X-Forwarded-For/Forwarded/Via) в ответе не обнаружены")
+		logger.Success("No proxy headers found (X-Forwarded-For/Forwarded/Via)")
 	}
 }
 
 func portScanner(ctx context.Context, target string) {
-	logger.Info("Асинхронное сканирование портов для %s...", target)
+	logger.Info("Asynchronous port scan for %s...", target)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	for _, p := range cfg.Ports {
@@ -298,7 +299,7 @@ func tracertTest(ctx context.Context, target string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		logger.Error("%s завершился с ошибкой: %v", cmdName, err)
+		logger.Error("%s exited with an error: %v", cmdName, err)
 	}
 }
 
@@ -312,39 +313,39 @@ func pingTest(ctx context.Context, target string, sizeBytes string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		logger.Error("ping завершился с ошибкой: %v", err)
+		logger.Error("ping exited with an error: %v", err)
 	}
 }
 
 func openExternal(target, tmpl string) {
 	if err := browser.OpenURL(tmpl + target); err != nil {
-		logger.Error("Не удалось открыть браузер: %v", err)
+		logger.Error("Failed to open browser: %v", err)
 	}
 }
 
-// menuItem описывает один пункт меню: как он подписан на экране и что
-// делает при выборе. Раньше диспетчер был большим switch по строкам "10",
-// "11" и т.д. — теперь список пунктов одновременно и рисует меню, и
-// прокидывает обработчик, так что рассинхронизация "меню показывает одно,
-// switch делает другое" структурно невозможна.
+// menuItem describes a single menu entry: its on-screen label and what it
+// does when selected. The dispatcher used to be one big switch over strings
+// like "10", "11" — now a single list of items both draws the menu and wires
+// up the handler, so a "menu shows one thing, switch does another" mismatch
+// is structurally impossible.
 type menuItem struct {
 	key         string
 	label       string
 	section     string
-	needsTarget bool // false для проверок, которые смотрят на само устройство, а не на цель
+	needsTarget bool // false for checks that look at this device rather than a target
+	longRunning bool // true if the handler manages its own context/duration (skips the default 30s timeout)
 	handler     func(ctx context.Context, target string)
 }
 
 func buildMenu() []menuItem {
-	basic := "БАЗОВЫЕ ПРОВЕРКИ СВЯЗИ"
-	osint := "ВНЕШНИЕ СЕРВИСЫ АНАЛИЗА"
-	block := "АНАЛИЗ МЕТОДОВ БЛОКИРОВКИ (РКН)"
-	// Раздел "САМОПРОВЕРКА" реализует методику выявления VPN/Proxy (см.
-	// методичку) в обратную сторону: не для поиска чужих пользователей, а
-	// чтобы оператор своего VPN-сервиса увидел те же признаки на СВОЁМ
-	// сервере и СВОЁМ устройстве, что видит сторона, применяющая методику —
-	// и мог их скорректировать.
-	selfcheck := "САМОПРОВЕРКА НА VPN/PROXY-ПРИЗНАКИ"
+	basic := "BASIC CONNECTIVITY CHECKS"
+	osint := "EXTERNAL ANALYSIS SERVICES"
+	block := "BLOCKING METHOD ANALYSIS (RKN)"
+	// The "SELF-CHECK" section runs a VPN/Proxy detection methodology in
+	// reverse: not to find other people's users, but so the operator of
+	// their own VPN service can see the same signals on THEIR OWN server
+	// and THEIR OWN device that the detecting side would see — and fix them.
+	selfcheck := "VPN/PROXY SIGNAL SELF-CHECK"
 
 	return []menuItem{
 		{key: "1", label: "Security Audit", section: basic, needsTarget: true, handler: securityAudit},
@@ -371,12 +372,12 @@ func buildMenu() []menuItem {
 		}},
 
 		{key: "14", label: "GeoIP/ASN/Hosting (target)", section: selfcheck, needsTarget: true, handler: geoipCheck},
-		{key: "15", label: "RTT / задержка (target)", section: selfcheck, needsTarget: true, handler: rttCheck},
-		{key: "16", label: "Интерфейсы (это устройство)", section: selfcheck, needsTarget: false, handler: localInterfaceCheck},
-		{key: "17", label: "Маршруты (это устройство)", section: selfcheck, needsTarget: false, handler: localRouteCheck},
-		{key: "18", label: "DNS (это устройство)", section: selfcheck, needsTarget: false, handler: localDNSCheck},
-		{key: "19", label: "Проверить IP в списке сканеров", section: selfcheck, needsTarget: true, handler: scannerLookupCheck},
-		{key: "20", label: "Входящие подключения vs список сканеров (сервер)", section: selfcheck, needsTarget: false, handler: serverScanCheck},
+		{key: "15", label: "RTT / latency (target)", section: selfcheck, needsTarget: true, handler: rttCheck},
+		{key: "16", label: "Interfaces (this device)", section: selfcheck, needsTarget: false, handler: localInterfaceCheck},
+		{key: "17", label: "Routes (this device)", section: selfcheck, needsTarget: false, handler: localRouteCheck},
+		{key: "18", label: "DNS (this device)", section: selfcheck, needsTarget: false, handler: localDNSCheck},
+		{key: "19", label: "Check IP against scanner list", section: selfcheck, needsTarget: true, handler: scannerLookupCheck},
+		{key: "20", label: "Connections vs scanner list (server)", section: selfcheck, needsTarget: false, longRunning: true, handler: connectionMonitorMenu},
 	}
 }
 
@@ -392,13 +393,13 @@ func drawMenu(items []menuItem) {
 	for _, s := range sections {
 		drawBox(s, bySection[s])
 	}
-	drawBox("ВЫХОД", []string{"0. Завершить работу"})
+	drawBox("EXIT", []string{"0. Quit"})
 }
 
 func main() {
 	loaded, err := config.Load("config.json")
 	if err != nil {
-		logger.Warn("Не удалось прочитать config.json (%v), использую значения по умолчанию", err)
+		logger.Warn("Failed to read config.json (%v), using default values", err)
 		loaded = config.Default()
 	}
 	cfg = loaded
@@ -422,7 +423,7 @@ func main() {
 
 		item, ok := dispatch[choice]
 		if !ok {
-			logger.Error("Неизвестный пункт меню: %s", choice)
+			logger.Error("Unknown menu item: %s", choice)
 			continue
 		}
 
@@ -436,13 +437,20 @@ func main() {
 
 		fmt.Printf("\n%s\n", strings.Repeat("—", 64))
 
-		// Общий таймаут на всю проверку — раньше traceroute/ping/browser
-		// не имели контекста и могли зависнуть на неопределённое время.
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		item.handler(ctx, target)
-		cancel()
+		if item.longRunning {
+			// The handler manages its own context, duration, and Ctrl+C
+			// handling — it may legitimately run far longer than the default
+			// 30s budget given to every other check.
+			item.handler(context.Background(), target)
+		} else {
+			// A shared timeout for every other check — traceroute/ping/browser
+			// used to have no context at all and could hang indefinitely.
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			item.handler(ctx, target)
+			cancel()
+		}
 
-		fmt.Printf("\n%s[ Нажмите Enter для продолжения ]%s", yellow(""), reset(""))
+		fmt.Printf("\n%s[ Press Enter to continue ]%s", yellow(""), reset(""))
 		readInput()
 	}
 }

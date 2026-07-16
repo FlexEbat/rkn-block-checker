@@ -14,13 +14,14 @@ import (
 	"rkn-checker/internal/logger"
 )
 
-// vpnIfacePattern — характерные имена туннельных интерфейсов из раздела 8.5
-// методики (tun/tap/wg/utun/ppp) плюс распространённые Windows-имена VPN-
-// адаптеров (wintun, openvpn, wireguard, tap-windows).
+// vpnIfacePattern — characteristic tunnel interface names (tun/tap/wg/utun/ppp)
+// plus common Windows VPN adapter names (wintun, openvpn, wireguard,
+// tap-windows) that detection methodologies flag as VPN indicators.
 var vpnIfacePattern = regexp.MustCompile(`(?i)^(tun|tap|wg|utun|ppp|wintun|ipsec|ovpn|nordlynx|wireguard)`)
 
-// privateOrLoopback grubo проверяет, похож ли IP на частный/loopback-адрес —
-// раздел 7.7 указывает на «локальные адреса DNS-серверов» как аномалию.
+// privateOrLoopback roughly checks whether an IP looks like a private/loopback
+// address — local DNS server addresses are flagged as an anomaly by
+// detection methodologies.
 func privateOrLoopback(ip net.IP) bool {
 	if ip == nil {
 		return false
@@ -28,18 +29,16 @@ func privateOrLoopback(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
 }
 
-// localInterfaceCheck — самопроверка локальных сетевых интерфейсов этого
-// устройства (раздел 8.5/8.4/8.6 методики, кроссплатформенно через net.Interfaces).
-// Показывает, что увидел бы анализ клиентских интерфейсов, если бы искал
-// признаки VPN: активные (UP) интерфейсы с именами tun/tap/wg/ppp и
-// заниженным MTU (методика упоминает типичные значения 1350/1400 для
-// туннелей VPN против ~1500 у обычного Ethernet).
+// localInterfaceCheck self-checks this device's local network interfaces,
+// cross-platform via net.Interfaces(). Shows what a VPN-signature scan would
+// see: active (UP) interfaces named tun/tap/wg/ppp with an unusually low MTU
+// (tunnels are typically 1350/1400 vs ~1500 for plain Ethernet).
 func localInterfaceCheck(ctx context.Context, _ string) {
-	logger.Info("Самопроверка локальных сетевых интерфейсов (%s)...", runtime.GOOS)
+	logger.Info("Self-checking local network interfaces (%s)...", runtime.GOOS)
 
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		logger.Error("Не удалось получить список интерфейсов: %v", err)
+		logger.Error("Failed to list interfaces: %v", err)
 		return
 	}
 
@@ -55,7 +54,7 @@ func localInterfaceCheck(ctx context.Context, _ string) {
 		}
 
 		if !looksLikeVPN && !(isUp && len(ips) > 0 && iface.Name != "lo" && iface.Name != "lo0") {
-			continue // показываем только потенциально интересные интерфейсы, не весь шум
+			continue // only show potentially interesting interfaces, not all the noise
 		}
 
 		status := "DOWN"
@@ -65,25 +64,24 @@ func localInterfaceCheck(ctx context.Context, _ string) {
 
 		if looksLikeVPN && isUp {
 			found = true
-			logger.Warn("%-12s статус=%-4s MTU=%-5d адреса=%v — имя похоже на туннельный интерфейс (VPN/WireGuard)", iface.Name, status, iface.MTU, ips)
+			logger.Warn("%-12s status=%-4s MTU=%-5d addrs=%v — name looks like a tunnel interface (VPN/WireGuard)", iface.Name, status, iface.MTU, ips)
 			if iface.MTU > 0 && iface.MTU < 1450 {
-				logger.Warn("  → MTU=%d ниже стандартного Ethernet (~1500) — типично для VPN-туннеля (методика, разд. 8.5)", iface.MTU)
+				logger.Warn("  → MTU=%d is below standard Ethernet (~1500) — typical for a VPN tunnel", iface.MTU)
 			}
 		} else if looksLikeVPN {
-			logger.Info("%-12s статус=%-4s (не активен) — по имени похож на VPN-интерфейс, но выключен", iface.Name, status)
+			logger.Info("%-12s status=%-4s (inactive) — name looks like a VPN interface, but it's down", iface.Name, status)
 		}
 	}
 
 	if !found {
-		logger.Success("Активных интерфейсов с признаками VPN/туннеля (tun/tap/wg/ppp) не обнаружено")
+		logger.Success("No active interfaces with VPN/tunnel-like names (tun/tap/wg/ppp) were found")
 	}
 }
 
-// localRouteCheck выводит таблицу маршрутизации этого устройства через
-// штатные системные утилиты и подсвечивает наличие нескольких маршрутов по
-// умолчанию — раздел 8.5 отмечает это как дополнительный признак.
+// localRouteCheck prints this device's routing table via the standard system
+// utility and flags multiple default routes as an additional signal.
 func localRouteCheck(ctx context.Context, _ string) {
-	logger.Info("Самопроверка таблицы маршрутизации (%s)...", runtime.GOOS)
+	logger.Info("Self-checking the routing table (%s)...", runtime.GOOS)
 
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -91,13 +89,13 @@ func localRouteCheck(ctx context.Context, _ string) {
 		cmd = exec.CommandContext(ctx, "route", "print", "-4")
 	case "darwin":
 		cmd = exec.CommandContext(ctx, "netstat", "-rn", "-f", "inet")
-	default: // linux и прочие unix
+	default: // linux and other unix
 		cmd = exec.CommandContext(ctx, "ip", "route")
 	}
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		logger.Error("Не удалось получить таблицу маршрутизации: %v", err)
+		logger.Error("Failed to get the routing table: %v", err)
 		return
 	}
 
@@ -113,17 +111,16 @@ func localRouteCheck(ctx context.Context, _ string) {
 	}
 
 	if defaultCount > 1 {
-		logger.Warn("Найдено маршрутов по умолчанию: %d — несколько default-маршрутов может указывать на активный VPN-туннель (разд. 8.5)", defaultCount)
+		logger.Warn("Found %d default routes — multiple default routes can indicate an active VPN tunnel", defaultCount)
 	} else {
-		logger.Success("Найдено маршрутов по умолчанию: %d — аномалий не обнаружено", defaultCount)
+		logger.Success("Found %d default route(s) — no anomalies detected", defaultCount)
 	}
 }
 
-// localDNSCheck проверяет DNS-конфигурацию устройства на признаки из
-// раздела 7.7: локальные/loopback DNS-серверы или направление резолвинга в
-// виртуальный интерфейс.
+// localDNSCheck checks this device's DNS configuration for local/loopback DNS
+// servers, or resolving being redirected through a virtual interface.
 func localDNSCheck(ctx context.Context, _ string) {
-	logger.Info("Самопроверка DNS-конфигурации (%s)...", runtime.GOOS)
+	logger.Info("Self-checking DNS configuration (%s)...", runtime.GOOS)
 
 	var nameservers []string
 
@@ -131,14 +128,14 @@ func localDNSCheck(ctx context.Context, _ string) {
 		cmd := exec.CommandContext(ctx, "ipconfig", "/all")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			logger.Error("Не удалось выполнить ipconfig: %v", err)
+			logger.Error("Failed to run ipconfig: %v", err)
 			return
 		}
 		nameservers = extractIPv4(string(out))
 	} else {
 		data, err := os.ReadFile("/etc/resolv.conf")
 		if err != nil {
-			logger.Error("Не удалось прочитать /etc/resolv.conf: %v", err)
+			logger.Error("Failed to read /etc/resolv.conf: %v", err)
 			return
 		}
 		scanner := bufio.NewScanner(strings.NewReader(string(data)))
@@ -154,7 +151,7 @@ func localDNSCheck(ctx context.Context, _ string) {
 	}
 
 	if len(nameservers) == 0 {
-		logger.Warn("DNS-серверы не найдены/не распознаны")
+		logger.Warn("No DNS servers found/recognized")
 		return
 	}
 
@@ -165,22 +162,22 @@ func localDNSCheck(ctx context.Context, _ string) {
 			continue
 		}
 		if privateOrLoopback(ip) {
-			logger.Warn("DNS-сервер %s — частный/loopback адрес (разд. 7.7: возможный признак перенаправления в VPN-интерфейс)", ns)
+			logger.Warn("DNS server %s — private/loopback address (possible sign of resolving being redirected into a VPN interface)", ns)
 			anomaly = true
 		} else {
-			fmt.Printf(" %s • DNS-сервер: %s\n", white(""), ns)
+			fmt.Printf(" %s • DNS server: %s\n", white(""), ns)
 		}
 	}
 
 	if !anomaly {
-		logger.Success("DNS-серверы выглядят как обычные публичные/провайдерские адреса")
+		logger.Success("DNS servers look like normal public/ISP addresses")
 	}
 }
 
-// extractIPv4 достаёт все IPv4-адреса из произвольного текста — используется
-// для грубого парсинга вывода ipconfig /all на Windows, где формат вывода
-// сильно зависит от локализации ОС и не поддаётся надёжному построчному
-// разбору по ключевым словам.
+// extractIPv4 pulls all IPv4 addresses out of arbitrary text — used for
+// rough parsing of Windows `ipconfig /all` output, whose exact format
+// depends heavily on OS localization and doesn't lend itself to reliable
+// line-by-line keyword parsing.
 func extractIPv4(text string) []string {
 	re := regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
 	return re.FindAllString(text, -1)

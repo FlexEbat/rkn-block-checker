@@ -1,8 +1,8 @@
-// Package config хранит настраиваемые параметры сканера: список портов,
-// таймауты для сетевых проверок и размеры блоков для block-теста.
-// Значения по умолчанию зашиты в коде; при наличии config.json в рабочей
-// директории они переопределяются из файла (частичный конфиг допустим —
-// отсутствующие поля остаются дефолтными).
+// Package config holds the scanner's tunable parameters: the port list,
+// timeouts for network checks, and block sizes for the block-transfer test.
+// Defaults are baked into the code; if config.json exists in the working
+// directory its values override them (a partial config is fine — missing
+// fields keep their defaults).
 package config
 
 import (
@@ -33,10 +33,10 @@ func Default() Config {
 	}
 }
 
-// Load читает config.json из указанного пути. Если файла нет — тихо
-// возвращает дефолтную конфигурацию (это не ошибка, конфиг опционален).
-// Если файл есть, но повреждён — возвращает ошибку явно, чтобы не работать
-// с неожиданными портами/таймаутами.
+// Load reads config.json from the given path. If the file doesn't exist, it
+// silently returns the default configuration (that's not an error — the
+// config file is optional). If the file exists but is malformed, it returns
+// an explicit error rather than silently running with unexpected ports/timeouts.
 func Load(path string) (Config, error) {
 	cfg := Default()
 
@@ -48,8 +48,8 @@ func Load(path string) (Config, error) {
 		return cfg, err
 	}
 
-	// Разбираем в отдельную структуру с указателями/пустыми срезами,
-	// чтобы не затирать дефолты полями, отсутствующими в файле.
+	// Unmarshal into a separate struct so fields absent from the file don't
+	// overwrite the defaults with zero values.
 	var override Config
 	if err := json.Unmarshal(data, &override); err != nil {
 		return cfg, err

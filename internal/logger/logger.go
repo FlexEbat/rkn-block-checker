@@ -1,6 +1,7 @@
-// Package logger предоставляет единый цветной вывод для CLI-инструмента.
-// Через 1000 строк кода разрозненные fmt.Printf с ручными префиксами "[!]"
-// превращаются в кашу — этот пакет даёт единый интерфейс info/success/warn/error.
+// Package logger provides unified colored output for the CLI tool.
+// After 1000 lines of code, scattered fmt.Printf calls with hand-rolled
+// "[!]" prefixes turn into a mess — this package gives a single
+// info/success/warn/error interface instead.
 package logger
 
 import (
@@ -17,25 +18,25 @@ var (
 	redC    = color.New(color.FgRed)
 )
 
-// Info выводит нейтральное информационное сообщение ("[*] ...").
+// Info prints a neutral informational message ("[*] ...").
 func Info(format string, a ...interface{}) {
 	cyanC.Printf("[*] ")
 	fmt.Printf(format+"\n", a...)
 }
 
-// Success выводит сообщение об успехе ("[+] ...").
+// Success prints a success message ("[+] ...").
 func Success(format string, a ...interface{}) {
 	greenC.Printf("[+] ")
 	fmt.Printf(format+"\n", a...)
 }
 
-// Warn выводит предупреждение ("[!] ...").
+// Warn prints a warning ("[!] ...").
 func Warn(format string, a ...interface{}) {
 	yellowC.Printf("[!] ")
 	fmt.Printf(format+"\n", a...)
 }
 
-// Error выводит сообщение об ошибке в stderr ("[-] ...").
+// Error prints an error message to stderr ("[-] ...").
 func Error(format string, a ...interface{}) {
 	redC.Fprintf(os.Stderr, "[-] ")
 	fmt.Fprintf(os.Stderr, format+"\n", a...)

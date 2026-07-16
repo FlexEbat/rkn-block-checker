@@ -2,14 +2,15 @@ package main
 
 import "crypto/tls"
 
-// insecureTLSConfig возвращает TLS-конфигурацию с отключённой проверкой
-// сертификата. Это осознанное решение, а не забытый долг: инструмент
-// анализирует, КАК блокируется соединение (RST, DPI-фрагментация, SNI-фильтрация
-// и т.д.), а не проверяет легитимность сертификата целевого хоста — валидный
-// сертификат тут не требуется и часто мешает диагностике MITM/блокировок.
-// Собран в одном месте, чтобы `go vet`/линтеры не ругались на каждое
-// InsecureSkipVerify по отдельности и чтобы при необходимости было проще
-// централизованно добавить allowlist или иные меры.
+// insecureTLSConfig returns a TLS configuration with certificate verification
+// disabled. This is a deliberate choice, not forgotten debt: the tool
+// analyzes HOW a connection is being blocked (RST, DPI fragmentation, SNI
+// filtering, etc.), not whether the target host's certificate is legitimate —
+// a valid certificate isn't required here and often gets in the way of
+// diagnosing MITM/blocking behavior.
+// Kept in one place so linters/`go vet` don't flag every InsecureSkipVerify
+// individually, and so an allowlist or other safeguard can be added
+// centrally later if needed.
 func insecureTLSConfig(nextProtos ...string) *tls.Config {
 	return &tls.Config{
 		InsecureSkipVerify: true, // required for censorship analysis, see doc comment above
